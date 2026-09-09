@@ -1,0 +1,3 @@
+Our flagship product is a cloud-based inventory management system.
+It supports real-time stock tracking across multiple warehouses.
+Pricing starts at $49/month for small businesses.
