@@ -6,12 +6,24 @@ from memory.graph_memory import add_fact, get_facts_about
 from retrieval.hybrid_search import load_documents, build_vector_index, build_bm25_index, hybrid_search, rerank_results
 
 llm = ChatOllama(model="llama3.1")
-init_memory()
 
-# Load documents once at startup for retrieval
-documents = load_documents()
-doc_vector_index = build_vector_index(documents)
-doc_bm25, doc_texts = build_bm25_index(documents)
+# Try to initialize memory - don't crash if Qdrant is down
+try:
+    init_memory()
+    MEMORY_AVAILABLE = True
+except Exception as e:
+    print(f"[WARNING] Vector memory unavailable: {e}")
+    MEMORY_AVAILABLE = False
+
+# Try to load documents for retrieval
+try:
+    documents = load_documents()
+    doc_vector_index = build_vector_index(documents)
+    doc_bm25, doc_texts = build_bm25_index(documents)
+    RETRIEVAL_AVAILABLE = True
+except Exception as e:
+    print(f"[WARNING] Document retrieval unavailable: {e}")
+    RETRIEVAL_AVAILABLE = False
 
 def generate(task: str) -> str:
     response = llm.invoke(task)
@@ -25,12 +37,36 @@ Is this output good quality and correct? Reply with only "GOOD" or "BAD" followe
     result = llm.invoke(eval_prompt)
     return result.content
 
+def safe_search_memory(task):
+    if not MEMORY_AVAILABLE:
+        return []
+    try:
+        return search_memory(task, top_k=2)
+    except Exception as e:
+        print(f"[WARNING] Memory search failed: {e}")
+        return []
+
+def safe_graph_facts():
+    try:
+        return get_facts_about("User")
+    except Exception as e:
+        print(f"[WARNING] Knowledge graph unavailable: {e}")
+        return []
+
+def safe_doc_search(task):
+    if not RETRIEVAL_AVAILABLE:
+        return []
+    try:
+        results = hybrid_search(task, documents, doc_vector_index, doc_bm25, doc_texts)
+        return rerank_results(task, results, top_k=2)
+    except Exception as e:
+        print(f"[WARNING] Document search failed: {e}")
+        return []
+
 def run_agent(task: str, max_retries: int = 2) -> str:
-    # Step 1: Get context from all sources
-    past_memories = search_memory(task, top_k=2)
-    graph_facts = get_facts_about("User")
-    doc_results = hybrid_search(task, documents, doc_vector_index, doc_bm25, doc_texts)
-    doc_context = rerank_results(task, doc_results, top_k=2)
+    past_memories = safe_search_memory(task)
+    graph_facts = safe_graph_facts()
+    doc_context = safe_doc_search(task)
 
     context_parts = []
     if past_memories:
@@ -57,7 +93,12 @@ def run_agent(task: str, max_retries: int = 2) -> str:
         output = generate(retry_prompt)
         attempt += 1
 
-    store_memory(f"Task: {task}\nOutput: {output}")
+    if MEMORY_AVAILABLE:
+        try:
+            store_memory(f"Task: {task}\nOutput: {output}")
+        except Exception as e:
+            print(f"[WARNING] Could not store memory: {e}")
+
     return output
 
 if __name__ == "__main__":

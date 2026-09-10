@@ -1,4 +1,5 @@
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Settings, Document
+from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
 from rank_bm25 import BM25Okapi
@@ -14,8 +15,15 @@ DOCS_PATH = os.path.join(os.path.dirname(__file__), "documents")
 ranker = Ranker()
 
 def load_documents():
+    """Load documents and split them into smaller chunks for better retrieval."""
     reader = SimpleDirectoryReader(DOCS_PATH)
-    return reader.load_data()
+    raw_documents = reader.load_data()
+
+    splitter = SentenceSplitter(chunk_size=100, chunk_overlap=15)
+    nodes = splitter.get_nodes_from_documents(raw_documents)
+
+    chunked_documents = [Document(text=node.text) for node in nodes]
+    return chunked_documents
 
 def build_vector_index(documents):
     """Dense/semantic search index."""
@@ -28,7 +36,7 @@ def build_bm25_index(documents):
     bm25 = BM25Okapi(tokenized)
     return bm25, texts
 
-def hybrid_search(query: str, documents, vector_index, bm25, texts, top_k=2):
+def hybrid_search(query: str, documents, vector_index, bm25, texts, top_k=3):
     # Vector search results
     vector_retriever = vector_index.as_retriever(similarity_top_k=top_k)
     vector_results = vector_retriever.retrieve(query)
@@ -54,7 +62,7 @@ def rerank_results(query: str, results: list, top_k=2):
 if __name__ == "__main__":
     print("Loading documents...")
     documents = load_documents()
-    print(f"Loaded {len(documents)} documents.\n")
+    print(f"Loaded {len(documents)} chunks.\n")
 
     print("Building indexes...")
     vector_index = build_vector_index(documents)
