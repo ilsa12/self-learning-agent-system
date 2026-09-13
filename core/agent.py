@@ -33,7 +33,10 @@ def evaluate(task: str, output: str) -> str:
     eval_prompt = f"""Task: {task}
 Output: {output}
 
-Is this output good quality and correct? Reply with only "GOOD" or "BAD" followed by a one-line reason."""
+Evaluate ONLY whether the output directly and correctly answers the task.
+Minor omissions of unrelated background context are fine and should NOT be marked as bad.
+Reply with only "GOOD" or "BAD" followed by a one-line reason.
+Only say BAD if the output fails to answer the actual question asked, contains factual errors, or is confusing/contradictory."""
     result = llm.invoke(eval_prompt)
     return result.content
 
@@ -69,15 +72,15 @@ def run_agent(task: str, max_retries: int = 2) -> str:
     doc_context = safe_doc_search(task)
 
     context_parts = []
-    if past_memories:
-        context_parts.append("Past conversation memory:\n" + "\n".join(past_memories))
+    if doc_context:
+        context_parts.append("Relevant document context (use this as the primary source for factual answers):\n" + "\n".join(doc_context))
     if graph_facts:
         context_parts.append("Known facts about the user:\n" + "\n".join(graph_facts))
-    if doc_context:
-        context_parts.append("Relevant document context:\n" + "\n".join(doc_context))
+    if past_memories:
+        context_parts.append("Past conversation memory (background only, lower priority):\n" + "\n".join(past_memories))
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant context available."
-    enriched_task = f"{context}\n\nCurrent task: {task}"
+    enriched_task = f"{context}\n\nCurrent task: {task}\n\nInstructions: Answer the task directly using the document context above if it's relevant. Be concise and direct."
 
     attempt = 0
     output = generate(enriched_task)
@@ -89,7 +92,12 @@ def run_agent(task: str, max_retries: int = 2) -> str:
         if verdict.strip().upper().startswith("GOOD"):
             break
 
-        retry_prompt = f"{enriched_task}\n\nYour previous attempt was: {output}\nIt was judged as: {verdict}\nPlease improve and try again."
+        retry_prompt = f"""{enriched_task}
+
+Your previous attempt was: {output}
+It was judged as: {verdict}
+
+Focus specifically on directly answering the original task using the most relevant piece of context above (prioritize the document context if present). Do not overthink — give a direct, concise answer."""
         output = generate(retry_prompt)
         attempt += 1
 
